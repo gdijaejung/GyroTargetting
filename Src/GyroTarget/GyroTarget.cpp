@@ -31,14 +31,19 @@ public:
 private:
 	network::cUDPServer m_udpServer;
 	network::cUDPClient m_udpClient;
+	network::cUDPClient m_udpSndData;
+
 	graphic::cCharacter m_character;
 	graphic::cCharacter m_cube;
 	graphic::cSphere m_sphere;
 	graphic::cText m_text;
 	graphic::cText m_rectText[4];
 	float m_rect[4];
-	float m_euler[2];
+	float m_euler[3];
 	graphic::cText m_eulerText[2];
+
+	char m_rcvBuffer[512];
+	int m_idx;
 
 	bool m_dbgPrint;
 	bool m_displayType;
@@ -71,6 +76,7 @@ cViewer::cViewer()
 	m_displayType = true;
 	m_accelCalibrate = false;
 	ZeroMemory(m_rect, sizeof(m_rect));
+	ZeroMemory(m_euler, sizeof(m_euler));
 
 	m_LButtonDown = false;
 	m_RButtonDown = false;
@@ -110,12 +116,20 @@ bool cViewer::OnInit()
 	GetMainLight().Init(cLight::LIGHT_DIRECTIONAL,
 		Vector4(0.7f, 0.7f, 0.7f, 0), Vector4(0.2f, 0.2f, 0.2f, 0));
 
+
+	//------------------------------------------------------------------------------------
+	// Init Connection
 	m_udpServer.Init(0, 8888);
 	m_udpServer.m_sleepMillis = 0;
 
 	//m_udpClient.Init("127.0.0.1", 8889);
 	m_udpClient.Init("192.168.0.23", 8889);
 	m_udpClient.m_sleepMillis = 10;
+
+	m_udpSndData.Init("127.0.0.1", 8890);
+	m_udpSndData.m_sleepMillis = 10;
+	//------------------------------------------------------------------------------------
+
 
 	m_cube.Create(m_renderer, "cube.dat");
 
@@ -148,17 +162,6 @@ bool cViewer::OnInit()
 
 void cViewer::OnUpdate(const float elapseT)
 {
-	//m_character.Move(elapseT);
-
-// 	char buff[512];
-// 	const int len = m_udpServer.GetRecvData(buff, sizeof(buff));
-// 	if (len > 0)
-// 	{
-// 		if (len < sizeof(buff))
-// 			buff[len] = NULL;
-// 
-// 	}
-
 	RET(!m_udpServer.IsConnect());
 
 	static float incT = 0;
@@ -182,7 +185,6 @@ void cViewer::OnRender(const float elapseT)
 		m_renderer.RenderGrid();
 		m_renderer.RenderAxis();
 
-		//m_character.Render(m_renderer, Matrix44::Identity);
 		m_cube.Render(m_renderer, Matrix44::Identity);
 
 		m_renderer.RenderFPS();
@@ -214,7 +216,6 @@ void cViewer::OnShutdown()
 // Cube보드에 IMU정보를 요청하고, 응답한 정보를 토대로 IMU정보를 갱신한다.
 bool cViewer::SyncIMU()
 {
-	//RETV(!m_isStart, false);
 	RETV(!m_udpServer.IsConnect(), false);
 	RETV(!m_udpClient.IsConnect(), false);
 
@@ -234,13 +235,27 @@ bool cViewer::SyncIMU()
 			int roll = *(short*)&buffer[0]; // +- 1800
 			int pitch = *(short*)&buffer[2]; // +- 860
 			int yaw = *(short*)&buffer[4]; // 0 ~ 360
-			//common::dbg::Print("%d %d %d", roll, pitch, yaw);
-			m_euler[0] = roll*0.1f;
-			m_euler[1] = pitch*0.1f;
+			const float chRoll = roll*0.1f;
+			const float chPitch = pitch*0.1f;
+			const float chYaw = (float)yaw;
+
+			if ((abs(m_euler[0] - chRoll) > 30) ||
+				(abs(m_euler[1] - chPitch) > 30) ||
+				(abs(m_euler[2] - chYaw) > 30))
+			{
+				m_euler[0] = chRoll;
+				m_euler[1] = chPitch;
+				m_euler[2] = chYaw;
+				return false; // error occur
+			}
+
+			m_euler[0] = chRoll;
+			m_euler[1] = chPitch;
+			m_euler[2] = chYaw;
 
 			Quaternion qr, qp, qy;
-			qr.Euler(Vector3(0, 0, -roll*0.1f));
-			qp.Euler(Vector3(pitch*0.1f, 0, 0));
+			qr.Euler(Vector3(0, 0, -chRoll));
+			qp.Euler(Vector3(chPitch, 0, 0));
 			qy.Euler(Vector3(0, (float)yaw, 0));
 
 			Quaternion q = qy * qp * qr;
@@ -248,13 +263,19 @@ bool cViewer::SyncIMU()
 
 			m_imuRcvCount++;
 			m_text.SetText(common::format("rcv IMU = %d", m_imuRcvCount));
-// 
+ 
 // 			if (m_resetHead)
 // 				m_syncIMUState = 2;
  			if (m_accelCalibrate)
  				m_syncIMUState = 3;
 
 // 			m_errorCount = 0;
+
+			float sndBuffer[3];
+			sndBuffer[0] = m_euler[0];
+			sndBuffer[1] = m_euler[1];
+			sndBuffer[2] = (float)yaw;
+			m_udpSndData.SendData((char*)sndBuffer, sizeof(sndBuffer));
  			return true;
 		}
 		else
@@ -310,8 +331,8 @@ int cViewer::RecvCommand(const unsigned char cmd, OUT unsigned char buffer[], co
 	if (!m_udpServer.IsConnect())
  		return 0;
 
- 	char rcvBuffer[512];
-	const int rcvLen = m_udpServer.GetRecvData(rcvBuffer, sizeof(rcvBuffer));
+ 	//char rcvBuffer[512];
+	const int rcvLen = m_udpServer.GetRecvData(m_rcvBuffer, sizeof(m_rcvBuffer));
 	if (rcvLen <= 0)
 		return 0;
 
@@ -321,13 +342,18 @@ int cViewer::RecvCommand(const unsigned char cmd, OUT unsigned char buffer[], co
 	int msp = 0;
 	int noDataCnt = 0;
 	int checkSum = 0;
-	int idx = 0;
+	//int idx = 0;
+	m_idx = 0;
+
 	while (1)
 	{
 		unsigned char c;
-		if (rcvLen > idx)
+		if ((state == 0) && (m_idx > 10))
+			break;
+
+		if (rcvLen > m_idx)
 		{
-			c = rcvBuffer[idx++];
+			c = m_rcvBuffer[m_idx++];
 		}
 		else
 		{
