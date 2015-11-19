@@ -10,44 +10,32 @@
       <Extensions>h;hh;hpp;hxx;hm;inl;inc;xsd</Extensions>
     </Filter>
     <Filter Include="UIComponent">
-      <UniqueIdentifier>{6f05d983-b6ff-4a19-9914-21bdbc23d0cc}</UniqueIdentifier>
+      <UniqueIdentifier>{b050ed5d-9fa5-4903-8b06-1a96d52b602a}</UniqueIdentifier>
     </Filter>
   </ItemGroup>
   <ItemGroup>
-    <ClInclude Include="GyroTarget.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="stdafx.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="BaseFlightProtocol.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="GyroInput.h">
-      <Filter>Header Files</Filter>
-    </ClInclude>
-    <ClInclude Include="..\Common\UIComponent\Serial.h">
-      <Filter>UIComponent</Filter>
-    </ClInclude>
-    <ClInclude Include="..\Common\UIComponent\BufferedSerial.h">
-      <Filter>UIComponent</Filter>
-    </ClInclude>
-  </ItemGroup>
-  <ItemGroup>
-    <ClCompile Include="GyroTarget.cpp">
+    <ClCompile Include="e2boxtarget.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
     <ClCompile Include="stdafx.cpp">
       <Filter>Source Files</Filter>
     </ClCompile>
-    <ClCompile Include="GyroInput.cpp">
-      <Filter>Source Files</Filter>
+    <ClCompile Include="..\Common\UIComponent\BufferedSerial.cpp">
+      <Filter>UIComponent</Filter>
     </ClCompile>
     <ClCompile Include="..\Common\UIComponent\Serial.cpp">
       <Filter>UIComponent</Filter>
     </ClCompile>
-    <ClCompile Include="..\Common\UIComponent\BufferedSerial.cpp">
+  </ItemGroup>
+  <ItemGroup>
+    <ClInclude Include="stdafx.h">
+      <Filter>Header Files</Filter>
+    </ClInclude>
+    <ClInclude Include="..\Common\UIComponent\BufferedSerial.h">
       <Filter>UIComponent</Filter>
-    </ClCompile>
+    </ClInclude>
+    <ClInclude Include="..\Common\UIComponent\Serial.h">
+      <Filter>UIComponent</Filter>
+    </ClInclude>
   </ItemGroup>
 </Project>

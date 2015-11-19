@@ -1,10 +1,13 @@
+//
+// E2Box Serial 입력
+//	- Baudrate 912600
+//
+//
 
 #include "stdafx.h"
-#include "GyroTarget.h"
 #include "../Common/Graphic/character/character.h"
-#include "BaseFlightProtocol.h"
 #include "../Common/UIComponent/BufferedSerial.h"
-#include "GyroInput.h"
+
 
 using namespace graphic;
 using namespace std;
@@ -24,16 +27,23 @@ public:
 
 
 private:
+	CBufferedSerial m_serial;
 	network::cUDPClient m_udpCamera;	// 타겟정보 전송
 	network::cUDPClient m_udpSndData;	// debug용 정보 전송 (roll,pitch,yaw 각 (float))
 
 	graphic::cCharacter m_cube;
 	graphic::cText m_text;
 	graphic::cText m_rectText[4];
+	Matrix44 m_baseTm;
+	Matrix44 m_qtm;
+
+
+	float m_euler[3];
 	float m_rect[4];
 	bool m_checkRect[4];
-	cGyroInput m_gyroInput;
 	graphic::cText m_eulerText[2];
+	int m_rcvIMUCnt;
+
 
 	enum STATE {
 		INIT,
@@ -71,13 +81,14 @@ struct SMGCameraData
 
 cViewer::cViewer()
 {
-	m_windowName = L"Gyro Targetting";
+	m_windowName = L"E2Box Gyro Targetting";
 	const RECT r = { 0, 0, 1024, 768 };
 	m_windowRect = r;
 	ZeroMemory(m_rect, sizeof(m_rect));
 	ZeroMemory(m_checkRect, sizeof(m_checkRect));
 
 	m_state = INIT;
+	m_rcvIMUCnt = 0;
 
 	m_LButtonDown = false;
 	m_RButtonDown = false;
@@ -112,7 +123,7 @@ bool cViewer::OnInit()
 
 	//------------------------------------------------------------------------------------
 	// Init Connection
-	if (!m_gyroInput.Init(cGyroInput::SER, 5, 115200))
+	if (!m_serial.Open(5, 912600))
 		return false;
 
 	if (!m_udpSndData.Init("127.0.0.1", 8890))
@@ -120,14 +131,14 @@ bool cViewer::OnInit()
 		cout << "Client Connect Error!! 127.0.0.1 8890 " << endl;
 		return false;
 	}
- 	m_udpSndData.m_sleepMillis = 10;
+	m_udpSndData.m_sleepMillis = 10;
 
 	if (!m_udpCamera.Init("127.0.0.1", 10001))
 	{
 		cout << "Client Connect Error!! 127.0.0.1 10001 " << endl;
 		return false;
 	}
-	m_udpCamera.m_sleepMillis = 10;	
+	m_udpCamera.m_sleepMillis = 10;
 	//------------------------------------------------------------------------------------
 
 
@@ -141,7 +152,7 @@ bool cViewer::OnInit()
 	for (int i = 0; i < 4; ++i)
 	{
 		m_rectText[i].Create(m_renderer);
-		m_rectText[i].SetPos(10, 50+(i*20));
+		m_rectText[i].SetPos(10, 50 + (i * 20));
 		m_rectText[i].SetColor(D3DXCOLOR(1, 1, 1, 1));
 		m_rectText[i].SetText("rect = ");
 	}
@@ -159,25 +170,49 @@ bool cViewer::OnInit()
 
 void cViewer::OnUpdate(const float elapseT)
 {
-	static float incT = 0;
-	incT += elapseT;
-	if (incT < 0.01f)
-		return;
-	incT = 0;
-	
-	m_gyroInput.Update(elapseT);
-	m_cube.SetTransform(m_gyroInput.m_rot.GetMatrix());
-	m_text.SetText(common::format("rcv IMU = %d", m_gyroInput.m_imuRcvCount));
-
-	if (m_udpSndData.IsConnect())
+	char buff[512];
+	int len = 0;
+	m_serial.ReadStringUntil('\n', buff, len, sizeof(buff));
+	if (len > 0)
 	{
-		float sndBuffer[3];
-		sndBuffer[0] = m_gyroInput.m_euler[0];
-		sndBuffer[1] = m_gyroInput.m_euler[1];
-		sndBuffer[2] = m_gyroInput.m_euler[2];
-		m_udpSndData.SendData((char*)sndBuffer, sizeof(sndBuffer));
-	}
+		if (len < sizeof(buff))
+			buff[len] = NULL;
 
+		vector<string> toks;
+		common::tokenizer(buff, ",", "", toks);
+
+		if (toks.size() >= 6)
+		{
+			static int cnt = 0;
+
+			const int i = toks[0].find('-');
+			if (string::npos == i)
+				return;
+
+			const string idStr = toks[0].substr(i + 1);
+			const int id = atoi(idStr.c_str());
+			if (id < 0)
+				return;
+
+			const float x = (float)atof(toks[1].c_str());
+			const float y = (float)atof(toks[2].c_str());
+			const float z = (float)atof(toks[3].c_str());
+			const float w = (float)atof(toks[4].c_str());
+			const Quaternion q(y, x, z, w);
+			const Matrix44 qtm = q.GetMatrix();
+
+			m_cube.SetTransform(qtm * m_baseTm); 
+			m_qtm = qtm;
+
+			Vector3 euler = (qtm * m_baseTm).GetQuaternion().Euler();
+			m_euler[0] = euler.x;
+			m_euler[1] = euler.z;
+			m_euler[2] = euler.y;
+
+
+			m_text.SetText(common::format("rcv IMU = %d", m_rcvIMUCnt++));
+		}
+	}
 
 	if (INIT == m_state)
 	{
@@ -188,8 +223,8 @@ void cViewer::OnUpdate(const float elapseT)
 	{
 		const float w = m_rect[2] - m_rect[0];
 		const float h = m_rect[3] - m_rect[1];
-		const float x = m_gyroInput.m_euler[0] - m_rect[0];
-		const float y = m_gyroInput.m_euler[1] - m_rect[1];
+		const float x = m_euler[0] - m_rect[0];
+		const float y = m_euler[1] - m_rect[1];
 
 		const float nx = x / w;
 		const float ny = y / h;
@@ -200,6 +235,7 @@ void cViewer::OnUpdate(const float elapseT)
 		sndData.y1 = 1 - ny;
 		m_udpCamera.SendData((char*)&sndData, sizeof(sndData));
 	}
+
 }
 
 
@@ -225,10 +261,10 @@ void cViewer::OnRender(const float elapseT)
 			m_rectText[i].Render();
 		}
 
-		m_eulerText[0].SetText(common::format("roll = %f", m_gyroInput.m_euler[0]));
-		m_eulerText[0].Render();
-		m_eulerText[1].SetText(common::format("pitch = %f", m_gyroInput.m_euler[1]));
-		m_eulerText[1].Render(); 
+ 		m_eulerText[0].SetText(common::format("roll = %f", m_euler[0]));
+ 		m_eulerText[0].Render();
+ 		m_eulerText[1].SetText(common::format("pitch = %f", m_euler[1]));
+ 		m_eulerText[1].Render();
 
 		m_renderer.EndScene();
 		m_renderer.Present();
@@ -238,7 +274,6 @@ void cViewer::OnRender(const float elapseT)
 
 void cViewer::OnShutdown()
 {
-	m_gyroInput.Close();
 }
 
 
@@ -274,14 +309,13 @@ void cViewer::MessageProc(UINT message, WPARAM wParam, LPARAM lParam)
 		break;
 
 		case VK_SPACE:
-			//m_accelCalibrate = true;
-			m_gyroInput.m_accelCalibrate = true;
+			m_baseTm = m_qtm.Inverse();
 			break;
 
-		case VK_LEFT: m_rect[0] = m_gyroInput.m_euler[0]; m_checkRect[0] = true;  break;
-		case VK_RIGHT: m_rect[2] = m_gyroInput.m_euler[0]; m_checkRect[1] = true; break;
-		case VK_UP: m_rect[1] = m_gyroInput.m_euler[1]; m_checkRect[2] = true; break;
-		case VK_DOWN: m_rect[3] = m_gyroInput.m_euler[1]; m_checkRect[3] = true; break;
+ 		case VK_LEFT: m_rect[0] = m_euler[0]; m_checkRect[0] = true;  break;
+ 		case VK_RIGHT: m_rect[2] = m_euler[0]; m_checkRect[1] = true; break;
+ 		case VK_UP: m_rect[1] = m_euler[1]; m_checkRect[2] = true; break;
+ 		case VK_DOWN: m_rect[3] = m_euler[1]; m_checkRect[3] = true; break;
 		}
 		break;
 

@@ -1,7 +1,4 @@
-
 #pragma once
-
-
 
 #include "../Common/Common/common.h"
 #include "../Common/AI/ai.h"
@@ -11,5 +8,3 @@
 
 using namespace common;
 
-#include "../Common/UIComponent/Serial.h"
-#include "../Common/UIComponent/BufferedSerial.h"
